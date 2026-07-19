@@ -1,0 +1,12 @@
+{
+  "name": "yoshidayama-tree-map-worker",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@11.9.0",
+  "scripts": {
+    "test": "node --test worker/*.test.js"
+  },
+  "dependencies": {
+    "jose": "^6.2.3"
+  }
+}

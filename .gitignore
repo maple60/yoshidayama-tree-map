@@ -2,6 +2,7 @@
 /_site/
 /_site-public/
 /_site-cloudflare/
+/node_modules/
 **/*.quarto_ipynb
 .Renviron
 .vscode/settings.json

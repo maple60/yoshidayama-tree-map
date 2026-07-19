@@ -66,41 +66,42 @@ if (identical(variant, "cloudflare")) {
   if (!grepl("X-Robots-Tag: noindex, nofollow", headers, fixed = TRUE)) {
     stop("Cloudflare X-Robots-Tag is missing.", call. = FALSE)
   }
+  if (!grepl("Cache-Control: private, no-store", headers, fixed = TRUE)) {
+    stop("Cloudflare private cache policy is missing.", call. = FALSE)
+  }
 } else if (file.exists(headers_file)) {
   stop("Cloudflare headers are present in the public artifact.", call. = FALSE)
 }
 
-if (identical(variant, "public")) {
-  forbidden_extensions <- c("csv", "tsv", "xlsx", "rds", "qmd")
-  artifact_files <- list.files(output_dir, recursive = TRUE, full.names = TRUE)
-  artifact_extensions <- tolower(tools::file_ext(artifact_files))
-  if (any(artifact_extensions %in% forbidden_extensions)) {
-    stop("A source or data file is present in the public artifact.", call. = FALSE)
-  }
+forbidden_extensions <- c("csv", "tsv", "xlsx", "rds", "qmd")
+artifact_files <- list.files(output_dir, recursive = TRUE, full.names = TRUE)
+artifact_extensions <- tolower(tools::file_ext(artifact_files))
+if (any(artifact_extensions %in% forbidden_extensions)) {
+  stop("A source or data file is present in the artifact.", call. = FALSE)
+}
 
-  text_files <- artifact_files[
-    artifact_extensions %in% c("html", "js", "css", "json", "xml", "txt")
-  ]
-  text_content <- vapply(
-    text_files,
-    function(path) paste(readLines(path, warn = FALSE, encoding = "UTF-8"), collapse = "\n"),
-    character(1L),
-    USE.NAMES = FALSE
-  )
+text_files <- artifact_files[
+  artifact_extensions %in% c("html", "js", "css", "json", "xml", "txt")
+]
+text_content <- vapply(
+  text_files,
+  function(path) paste(readLines(path, warn = FALSE, encoding = "UTF-8"), collapse = "\n"),
+  character(1L),
+  USE.NAMES = FALSE
+)
 
-  credential_patterns <- c(
-    "BEGIN PRIVATE KEY",
-    '"private_key":',
-    '"client_email":',
-    "gha-creds-"
-  )
-  if (any(vapply(
-    credential_patterns,
-    function(pattern) any(grepl(pattern, text_content, fixed = TRUE)),
-    logical(1L)
-  ))) {
-    stop("Credential material is present in the public artifact.", call. = FALSE)
-  }
+credential_patterns <- c(
+  "BEGIN PRIVATE KEY",
+  '"private_key":',
+  '"client_email":',
+  "gha-creds-"
+)
+if (any(vapply(
+  credential_patterns,
+  function(pattern) any(grepl(pattern, text_content, fixed = TRUE)),
+  logical(1L)
+))) {
+  stop("Credential material is present in the artifact.", call. = FALSE)
 }
 
 message(sprintf("Verified %s build: %d public tree records.", variant, nrow(trees)))

@@ -1,9 +1,16 @@
 {
   "name": "yoshidayama-tree-map",
+  "main": "./worker/index.js",
   "compatibility_date": "2026-07-19",
-  "workers_dev": false,
+  "workers_dev": true,
   "preview_urls": false,
+  "vars": {
+    "TEAM_DOMAIN": "https://crimson-lab-9595.cloudflareaccess.com",
+    "POLICY_AUD": "44b8f47fcca0ffbff23a1c17279407b9b4948ab0dd777478d4ea13b4ba9c9432"
+  },
   "assets": {
-    "directory": "./_site-cloudflare"
+    "directory": "./_site-cloudflare",
+    "binding": "ASSETS",
+    "run_worker_first": true
   }
 }
