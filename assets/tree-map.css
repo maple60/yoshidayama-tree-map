@@ -1,0 +1,41 @@
+#tree-map {
+  width: 100%;
+  height: 560px;
+  background: var(--bs-tertiary-bg);
+}
+
+.tree-map-summary {
+  margin-top: 0.5rem;
+  color: var(--bs-secondary-color);
+}
+
+#tree-map .leaflet-popup-content {
+  min-width: 12rem;
+  margin: 0.8rem 1rem;
+}
+
+#tree-map .tree-popup-name,
+#tree-map .tree-popup-scientific,
+#tree-map .tree-popup-meta,
+#tree-map .tree-popup-note {
+  display: block;
+}
+
+#tree-map .tree-popup-scientific,
+#tree-map .tree-popup-meta {
+  margin-top: 0.2rem;
+}
+
+#tree-map .tree-popup-meta {
+  color: var(--bs-secondary-color);
+}
+
+#tree-map .tree-popup-note {
+  margin-top: 0.45rem;
+}
+
+@media (max-width: 575.98px) {
+  #tree-map {
+    height: 420px;
+  }
+}

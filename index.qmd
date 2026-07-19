@@ -1,13 +1,86 @@
 ---
 title: "吉田山の里山の会 植樹木マップ"
+page-layout: full
+format:
+  html:
+    css: assets/tree-map.css
+    include-in-header:
+      text: |
+        <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.css">
+        <script src="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.js" defer></script>
+        <script src="assets/tree-map.js" defer></script>
 ---
 
-
 ```{r}
-sheet_id <- Sys.getenv("TREE_SHEET_ID")
+#| echo: false
+#| warning: false
+#| results: asis
 
-trees <- googlesheets4::read_sheet(
-  ss = sheet_id,
-  sheet = "public"
+sheet_id <- Sys.getenv(
+  "TREE_SHEET_ID",
+  unset = "1IQr-S0WZLd33h045z6eAyrtxiXQqPvbpR--ndn9mHUk"
+)
+
+csv_url <- sprintf(
+  "https://docs.google.com/spreadsheets/d/%s/gviz/tq?tqx=out:csv&gid=0",
+  sheet_id
+)
+
+trees <- suppressWarnings(utils::read.csv(
+  csv_url,
+  fileEncoding = "UTF-8",
+  check.names = FALSE,
+  na.strings = c("", "NA")
+))
+
+required_columns <- c(
+  "record_id", "species_ja", "species_scientific",
+  "latitude", "longitude", "publish", "year", "note"
+)
+missing_columns <- setdiff(required_columns, names(trees))
+if (length(missing_columns)) {
+  stop("Spreadsheetに必要な列がありません: ", paste(missing_columns, collapse = ", "))
+}
+
+is_public <- tolower(trimws(as.character(trees$publish))) %in%
+  c("true", "1", "yes")
+trees <- trees[is_public, required_columns, drop = FALSE]
+trees$latitude <- suppressWarnings(as.numeric(trees$latitude))
+trees$longitude <- suppressWarnings(as.numeric(trees$longitude))
+trees <- trees[
+  is.finite(trees$latitude) & is.finite(trees$longitude),
+  ,
+  drop = FALSE
+]
+
+if (!nrow(trees)) {
+  stop("公開対象で、有効な緯度・経度を持つ立木データがありません。")
+}
+
+tree_json <- jsonlite::toJSON(
+  trees,
+  dataframe = "rows",
+  auto_unbox = TRUE,
+  na = "null"
+)
+tree_json <- gsub("</", "<\\/", tree_json, fixed = TRUE)
+
+cat(
+  '<div id="tree-map" role="region" ',
+  'aria-label="吉田山の立木位置図" ',
+  'aria-describedby="tree-map-summary"></div>\n',
+  sep = ""
+)
+cat(
+  sprintf(
+    '<p id="tree-map-summary" class="tree-map-summary">公開対象の立木 %d件を表示しています。マーカーを選択すると詳細を確認できます。</p>\n',
+    nrow(trees)
+  )
+)
+cat(
+  '<script id="tree-map-data" type="application/json">',
+  tree_json,
+  '</script>\n',
+  sep = ""
 )
 ```
