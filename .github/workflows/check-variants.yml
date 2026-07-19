@@ -1,0 +1,56 @@
+name: Check site variants
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  render:
+    name: Render ${{ matrix.variant }} variant
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - variant: public
+            output_dir: _site-public
+          - variant: cloudflare
+            output_dir: _site-cloudflare
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: quarto-dev/quarto-actions/setup@v2
+
+      - uses: r-lib/actions/setup-r@v2
+        with:
+          r-version: "4.5.3"
+          use-public-rspm: true
+
+      - uses: r-lib/actions/setup-renv@v2
+
+      - name: Prepare sentinel fixture outside the project
+        run: cp tests/fixtures/trees.csv "$RUNNER_TEMP/trees.csv"
+
+      - name: Render variant
+        env:
+          TREE_DATA_FILE: ${{ runner.temp }}/trees.csv
+          TREE_SITE_VARIANT: ${{ matrix.variant }}
+        run: quarto render --profile "${{ matrix.variant }}"
+
+      - name: Verify variant
+        run: Rscript scripts/verify_build.R "${{ matrix.variant }}" "${{ matrix.output_dir }}"
+
+      - name: Check sentinel disclosure
+        shell: bash
+        run: |
+          if [[ "${{ matrix.variant }}" == "public" ]]; then
+            ! grep -R -F -q 'PRIVATE_LEAK_SENTINEL' "${{ matrix.output_dir }}"
+          else
+            grep -R -F -q 'PRIVATE_LEAK_SENTINEL_PLANTER' "${{ matrix.output_dir }}"
+          fi

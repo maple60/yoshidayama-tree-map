@@ -1,14 +1,13 @@
 args <- commandArgs(trailingOnly = TRUE)
-if (length(args) != 3L) {
+if (length(args) != 2L) {
   stop(
-    "Usage: Rscript scripts/verify_build.R VARIANT OUTPUT_DIR SOURCE_CSV",
+    "Usage: Rscript scripts/verify_build.R VARIANT OUTPUT_DIR",
     call. = FALSE
   )
 }
 
 variant <- tolower(args[[1L]])
 output_dir <- normalizePath(args[[2L]], mustWork = TRUE)
-source_file <- normalizePath(args[[3L]], mustWork = TRUE)
 if (!variant %in% c("public", "cloudflare")) {
   stop("VARIANT must be 'public' or 'cloudflare'.", call. = FALSE)
 }
@@ -50,6 +49,27 @@ if (!grepl(variant_marker, html, fixed = TRUE)) {
   stop("Rendered page variant marker is missing.", call. = FALSE)
 }
 
+sri_hashes <- c(
+  "sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=",
+  "sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
+)
+if (!all(vapply(sri_hashes, grepl, logical(1L), x = html, fixed = TRUE))) {
+  stop("Leaflet subresource integrity metadata is missing.", call. = FALSE)
+}
+
+headers_file <- file.path(output_dir, "_headers")
+if (identical(variant, "cloudflare")) {
+  if (!file.exists(headers_file)) {
+    stop("Cloudflare security headers are missing.", call. = FALSE)
+  }
+  headers <- paste(readLines(headers_file, warn = FALSE), collapse = "\n")
+  if (!grepl("X-Robots-Tag: noindex, nofollow", headers, fixed = TRUE)) {
+    stop("Cloudflare X-Robots-Tag is missing.", call. = FALSE)
+  }
+} else if (file.exists(headers_file)) {
+  stop("Cloudflare headers are present in the public artifact.", call. = FALSE)
+}
+
 if (identical(variant, "public")) {
   forbidden_extensions <- c("csv", "tsv", "xlsx", "rds", "qmd")
   artifact_files <- list.files(output_dir, recursive = TRUE, full.names = TRUE)
@@ -80,25 +100,6 @@ if (identical(variant, "public")) {
     logical(1L)
   ))) {
     stop("Credential material is present in the public artifact.", call. = FALSE)
-  }
-
-  source_data <- utils::read.csv(
-    source_file,
-    fileEncoding = "UTF-8",
-    check.names = FALSE,
-    na.strings = c("", "NA")
-  )
-  if ("planted_by" %in% names(source_data)) {
-    private_values <- unique(trimws(as.character(source_data$planted_by)))
-    private_values <- private_values[!is.na(private_values) & nzchar(private_values)]
-    leaked <- vapply(
-      private_values,
-      function(value) any(grepl(value, text_content, fixed = TRUE)),
-      logical(1L)
-    )
-    if (any(leaked)) {
-      stop("A planted_by value is present in the public artifact.", call. = FALSE)
-    }
   }
 }
 

@@ -51,7 +51,7 @@ jobs:
         run: quarto render --profile cloudflare
 
       - name: Verify authenticated artifact
-        run: Rscript scripts/verify_build.R cloudflare _site-cloudflare "$RUNNER_TEMP/trees.csv"
+        run: Rscript scripts/verify_build.R cloudflare _site-cloudflare
 
       - name: Deploy unreachable Worker assets
         uses: cloudflare/wrangler-action@v4
