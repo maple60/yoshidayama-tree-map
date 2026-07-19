@@ -8,5 +8,8 @@
   },
   "dependencies": {
     "jose": "^6.2.3"
+  },
+  "devDependencies": {
+    "wrangler": "4.112.0"
   }
 }
