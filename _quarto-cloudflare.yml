@@ -1,7 +1,4 @@
 project:
   output-dir: _site-cloudflare
-
-format:
-  html:
-    metadata:
-      robots: "noindex, nofollow"
+  resources:
+    - _headers
