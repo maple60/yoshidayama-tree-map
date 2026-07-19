@@ -16,7 +16,7 @@ Google Sheets
     ↓ ビルド時に取得
 GitHub Actions（R + renv + Quarto）
     ↓ quarto render
-_site/
+_site-cloudflare/
     ↓ wrangler deploy
 Cloudflare Workers Static Assets
     ↓ Cloudflare Accessで認証
@@ -36,7 +36,7 @@ Cloudflare Workers Static Assets
 :::
 
 ::: {.callout-note}
-この文書は設定手順をまとめたもの。現時点ではCloudflareへのデプロイ、GitHub Secretsの登録、`wrangler.jsonc` やActions workflowの追加は実施していない。
+リポジトリ側の実装は完了している。現在の正本は `README.md`、`.github/workflows/deploy-cloudflare.yml`、`wrangler.jsonc` である。GitHub Secretsの登録、元シートの非公開化、Cloudflare AccessとCustom Domainの設定は人間による作業が必要になる。
 :::
 
 ## 構成と責任分担
@@ -66,27 +66,24 @@ Cloudflareを操作する前に、次を決めておく。
 
 ドメイン未決定の間は、以下の例にある `trees.example.jp` を実際のホスト名へ置き換えないままデプロイしない。
 
-## 実装時に追加するファイル
+## 現在の実装ファイル
 
-公開設定を実装する段階では、概ね次を追加する。
+認証限定版は主に次のファイルで構成される。
 
 ```text
 .
 ├─ .github/
 │  └─ workflows/
-│     └─ deploy-workers.yml
+│     └─ deploy-cloudflare.yml
 ├─ notebook/
 │  └─ cloudflare-workers-deployment.qmd
-├─ package.json
-├─ package-lock.json
 └─ wrangler.jsonc
 ```
 
-- `package.json` / `package-lock.json`: Wranglerのバージョンを固定する
 - `wrangler.jsonc`: Worker名、静的ファイル、公開経路を宣言する
-- `deploy-workers.yml`: レンダリング、検査、デプロイを自動化する
+- `deploy-cloudflare.yml`: 非公開Sheetの取得、レンダリング、検査、デプロイを自動化する
 
-`wrangler` はグローバルではなく、このプロジェクトのdev dependencyとして追加する。
+Actionsでは `cloudflare/wrangler-action` 側でWrangler 4系を固定している。
 
 ## ローカル準備
 
@@ -263,10 +260,12 @@ Repository settingsで次を登録する。
 
 - `CLOUDFLARE_API_TOKEN`
 - `CLOUDFLARE_ACCOUNT_ID`
+- `GOOGLE_SERVICE_ACCOUNT_JSON`
 
 **Actions variable**
 
 - `TREE_SHEET_ID`
+- `TREE_SHEET_RANGE`（任意）
 
 `CLOUDFLARE_API_TOKEN` はCloudflareの `Edit Cloudflare Workers` テンプレートを基に作り、対象accountとzoneを必要最小限に絞る。リポジトリやworkflowへ値を直接書かない。
 
@@ -274,7 +273,7 @@ Repository settingsで次を登録する。
 
 ### workflow例
 
-`.github/workflows/deploy-workers.yml` の例:
+実際の設定は `.github/workflows/deploy-cloudflare.yml` を参照する。以下は構成を理解するための例であり、リポジトリ内のworkflowを正本とする。
 
 ```yaml
 name: Deploy Quarto site to Cloudflare Workers
@@ -452,9 +451,7 @@ Cloudflare Accessは「サイトへ到達できる人」を制御する。認証
 
 ### Google Sheetsの公開範囲
 
-現在の実装は匿名で読めるGoogle SheetsのCSV endpointをレンダリング時に利用する。Cloudflare Accessでサイトを限定公開しても、元のシートが公開設定ならシート自体のURLは別途アクセスできる。
-
-元データも非公開にする必要がある場合は、Google APIのservice account等による取得へ設計変更が必要になる。これは認証情報管理とActions設定を伴うため、公開サイトのAccess設定とは分けて検討する。
+現在の実装は、非公開Google Sheetを読み取り専用service accountでGitHub Actionsから取得する。元シートを一般公開せず、`GOOGLE_SERVICE_ACCOUNT_JSON` はGitHub Secretだけに保存する。
 
 ### API tokenとservice token
 

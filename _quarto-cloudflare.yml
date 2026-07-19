@@ -1,4 +1,13 @@
 project:
   output-dir: _site-cloudflare
+  render:
+    - index.qmd
+    - notebook/cloudflare-workers-deployment.qmd
   resources:
     - _headers
+
+website:
+  navbar:
+    left:
+      - href: notebook/cloudflare-workers-deployment.qmd
+        text: 公開・保守
