@@ -6,7 +6,7 @@
   "preview_urls": false,
   "vars": {
     "TEAM_DOMAIN": "https://crimson-lab-9595.cloudflareaccess.com",
-    "POLICY_AUD": "c5b117b37a96b92c0d5dc25819a670aa23ed8139bf931a8e6bb15e416c5d5d82"
+    "POLICY_AUD": "6a4ad8eba0c012b0889eddfeb0328e50b9de405da43039844455a5f8c31180e3"
   },
   "assets": {
     "directory": "./_site-cloudflare",
