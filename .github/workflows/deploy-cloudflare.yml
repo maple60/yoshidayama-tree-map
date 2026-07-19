@@ -24,8 +24,16 @@ jobs:
 
       - uses: pnpm/action-setup@v6
 
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+          cache: pnpm
+
       - name: Install Worker dependencies
         run: pnpm install --frozen-lockfile
+
+      - name: Test Access JWT validation
+        run: pnpm test
 
       - uses: quarto-dev/quarto-actions/setup@v2
 
@@ -66,5 +74,5 @@ jobs:
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          wranglerVersion: "4"
+          wranglerVersion: "4.112.0"
           command: deploy --config wrangler.jsonc
