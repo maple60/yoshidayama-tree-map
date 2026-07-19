@@ -1,0 +1,65 @@
+name: Bootstrap Cloudflare with public tree map
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cloudflare-production
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      TREE_SHEET_ID: ${{ vars.TREE_SHEET_ID }}
+      TREE_SHEET_ACCESS_MODE: ${{ vars.TREE_SHEET_ACCESS_MODE }}
+      TREE_SHEET_GID: ${{ vars.TREE_SHEET_GID }}
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: quarto-dev/quarto-actions/setup@v2
+
+      - uses: r-lib/actions/setup-r@v2
+        with:
+          r-version: "4.5.3"
+          use-public-rspm: true
+
+      - uses: r-lib/actions/setup-renv@v2
+
+      - name: Authenticate to Google Sheets
+        if: env.TREE_SHEET_ACCESS_MODE != 'public-link'
+        id: google-auth
+        uses: google-github-actions/auth@v3
+        with:
+          credentials_json: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
+          create_credentials_file: false
+          token_format: access_token
+          access_token_scopes: https://www.googleapis.com/auth/spreadsheets.readonly
+
+      - name: Fetch source sheet
+        env:
+          GOOGLE_ACCESS_TOKEN: ${{ steps.google-auth.outputs.access_token }}
+          TREE_SHEET_RANGE: ${{ vars.TREE_SHEET_RANGE }}
+        run: Rscript scripts/fetch_sheet.R "$RUNNER_TEMP/trees.csv"
+
+      - name: Render public-safe site
+        env:
+          TREE_DATA_FILE: ${{ runner.temp }}/trees.csv
+          TREE_SITE_VARIANT: public
+        run: quarto render --profile public
+
+      - name: Verify public-safe artifact
+        run: Rscript scripts/verify_build.R public _site-public
+
+      - name: Deploy public-safe assets to unreachable Worker
+        uses: cloudflare/wrangler-action@v4
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          wranglerVersion: "4"
+          command: deploy --config wrangler.jsonc --assets _site-public
