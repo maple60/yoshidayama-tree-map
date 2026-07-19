@@ -1,0 +1,13 @@
+---
+title: "吉田山の里山の会 植樹木マップ"
+---
+
+
+```{r}
+sheet_id <- Sys.getenv("TREE_SHEET_ID")
+
+trees <- googlesheets4::read_sheet(
+  ss = sheet_id,
+  sheet = "public"
+)
+```
