@@ -1,5 +1,8 @@
 project:
   type: website
+  output-dir: _site-public
+  render:
+    - index.qmd
 
 website:
   title: "吉田山 植樹木マップ"

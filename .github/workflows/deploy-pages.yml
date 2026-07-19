@@ -1,0 +1,94 @@
+name: Deploy public tree map to GitHub Pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      bootstrap_public_sheet:
+        description: Temporary one-time deployment from the currently public sheet
+        required: false
+        type: boolean
+        default: false
+  schedule:
+    - cron: "15 20 * * *"
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: github-pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    if: ${{ github.event_name == 'workflow_dispatch' || vars.GOOGLE_SHEETS_AUTH_READY == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    env:
+      TREE_SHEET_ID: ${{ vars.TREE_SHEET_ID }}
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: quarto-dev/quarto-actions/setup@v2
+
+      - uses: r-lib/actions/setup-r@v2
+        with:
+          r-version: "4.5.3"
+          use-public-rspm: true
+
+      - uses: r-lib/actions/setup-renv@v2
+
+      - name: Authenticate to Google Sheets
+        id: google-auth
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.bootstrap_public_sheet != true }}
+        uses: google-github-actions/auth@v3
+        with:
+          credentials_json: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
+          create_credentials_file: false
+          token_format: access_token
+          access_token_scopes: https://www.googleapis.com/auth/spreadsheets.readonly
+
+      - name: Fetch private source sheet
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.bootstrap_public_sheet != true }}
+        env:
+          GOOGLE_ACCESS_TOKEN: ${{ steps.google-auth.outputs.access_token }}
+          TREE_SHEET_RANGE: ${{ vars.TREE_SHEET_RANGE }}
+        run: Rscript scripts/fetch_sheet.R "$RUNNER_TEMP/trees.csv"
+
+      - name: Bootstrap from the currently public sheet
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.bootstrap_public_sheet == true }}
+        shell: bash
+        run: |
+          test -n "$TREE_SHEET_ID"
+          curl --fail --location --silent --show-error \
+            --get \
+            --data-urlencode "tqx=out:csv" \
+            --data-urlencode "gid=0" \
+            "https://docs.google.com/spreadsheets/d/${TREE_SHEET_ID}/gviz/tq" \
+            --output "$RUNNER_TEMP/trees.csv"
+
+      - name: Render public site
+        env:
+          TREE_DATA_FILE: ${{ runner.temp }}/trees.csv
+          TREE_SITE_VARIANT: public
+        run: quarto render --profile public
+
+      - name: Verify public artifact
+        run: Rscript scripts/verify_build.R public _site-public "$RUNNER_TEMP/trees.csv"
+
+      - uses: actions/configure-pages@v6
+
+      - uses: actions/upload-pages-artifact@v5
+        with:
+          path: _site-public
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v5

@@ -16,30 +16,46 @@ format:
 #| warning: false
 #| results: asis
 
-sheet_id <- Sys.getenv(
-  "TREE_SHEET_ID",
-  unset = "1IQr-S0WZLd33h045z6eAyrtxiXQqPvbpR--ndn9mHUk"
-)
+site_variant <- tolower(trimws(Sys.getenv(
+  "TREE_SITE_VARIANT",
+  unset = "public"
+)))
+if (!site_variant %in% c("public", "cloudflare")) {
+  stop("TREE_SITE_VARIANT must be 'public' or 'cloudflare'.")
+}
 
-csv_url <- sprintf(
-  "https://docs.google.com/spreadsheets/d/%s/gviz/tq?tqx=out:csv&gid=0",
-  sheet_id
-)
+data_file <- Sys.getenv("TREE_DATA_FILE", unset = "")
+if (!nzchar(data_file)) {
+  stop("TREE_DATA_FILE must point to a CSV file outside the project directory.")
+}
+data_file <- normalizePath(data_file, mustWork = TRUE)
+project_dir <- normalizePath(getwd(), mustWork = TRUE)
+project_prefix <- paste0(project_dir, .Platform$file.sep)
+if (
+  identical(tolower(data_file), tolower(project_dir)) ||
+    startsWith(tolower(data_file), tolower(project_prefix))
+) {
+  stop("TREE_DATA_FILE must be outside the project directory.")
+}
 
 trees <- suppressWarnings(utils::read.csv(
-  csv_url,
+  data_file,
   fileEncoding = "UTF-8",
   check.names = FALSE,
   na.strings = c("", "NA")
 ))
 
-required_columns <- c(
+public_columns <- c(
   "record_id", "species_ja", "species_scientific",
   "latitude", "longitude", "publish", "year", "note"
 )
+required_columns <- public_columns
+if (identical(site_variant, "cloudflare")) {
+  required_columns <- c(required_columns, "planted_by")
+}
 missing_columns <- setdiff(required_columns, names(trees))
 if (length(missing_columns)) {
-  stop("Spreadsheetに必要な列がありません: ", paste(missing_columns, collapse = ", "))
+  stop("CSVに必要な列がありません: ", paste(missing_columns, collapse = ", "))
 }
 
 is_public <- tolower(trimws(as.character(trees$publish))) %in%
@@ -57,15 +73,34 @@ if (!nrow(trees)) {
   stop("公開対象で、有効な緯度・経度を持つ立木データがありません。")
 }
 
+output_columns <- setdiff(public_columns, "publish")
+if (identical(site_variant, "cloudflare")) {
+  output_columns <- c(output_columns, "planted_by")
+}
+# 個人情報はJSON化の前に明示的な列許可リストで除外する。
+trees <- trees[, output_columns, drop = FALSE]
+
 tree_json <- jsonlite::toJSON(
   trees,
   dataframe = "rows",
   auto_unbox = TRUE,
-  na = "null"
+  na = "null",
+  digits = NA
 )
 tree_json <- gsub("</", "<\\/", tree_json, fixed = TRUE)
 
+variant_text <- if (identical(site_variant, "cloudflare")) {
+  "認証限定版：植栽者情報を表示します。"
+} else {
+  "一般公開版：植栽者情報は含まれていません。"
+}
+
 cat(
+  sprintf(
+    '<p class="tree-site-variant" data-site-variant="%s">%s</p>\n',
+    site_variant,
+    variant_text
+  ),
   '<div id="tree-map" role="region" ',
   'aria-label="吉田山の立木位置図" ',
   'aria-describedby="tree-map-summary"></div>\n',
