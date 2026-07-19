@@ -52,6 +52,14 @@
       scrollWheelZoom: false
     });
 
+    mapElement.addEventListener("click", () => {
+      map.scrollWheelZoom.enable();
+    });
+
+    mapElement.addEventListener("mouseleave", () => {
+      map.scrollWheelZoom.disable();
+    });
+
     L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
       maxZoom: 19,
       attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
