@@ -95,20 +95,49 @@ variant_text <- if (identical(site_variant, "cloudflare")) {
   "一般公開版：植栽者情報は含まれていません。"
 }
 
+planted_by_row <- if (identical(site_variant, "cloudflare")) {
+  '<div class="tree-detail-row"><dt>植栽者</dt><dd data-tree-detail="planted-by"></dd></div>\n'
+} else {
+  ""
+}
+
 cat(
   sprintf(
     '<p class="tree-site-variant" data-site-variant="%s">%s</p>\n',
     site_variant,
     variant_text
   ),
+  '<div class="tree-map-layout">\n',
   '<div id="tree-map" role="region" ',
   'aria-label="吉田山の立木位置図" ',
   'aria-describedby="tree-map-summary"></div>\n',
+  '<section id="tree-detail-panel" class="tree-detail-panel card" ',
+  'role="complementary" aria-labelledby="tree-detail-heading">\n',
+  '<div class="card-body">\n',
+  '<p id="tree-detail-heading" class="tree-detail-heading" role="heading" aria-level="2">立木の詳細</p>\n',
+  '<p id="tree-detail-empty" class="tree-detail-empty">地図上のマーカーを選択すると、ここに植栽情報が表示されます。</p>\n',
+  '<div id="tree-detail-content" aria-live="polite" aria-atomic="true" hidden>\n',
+  '<p class="tree-detail-name" data-tree-detail="name" role="heading" aria-level="3"></p>\n',
+  '<p class="tree-detail-scientific" data-tree-detail="scientific"></p>\n',
+  '<dl class="tree-detail-list">\n',
+  '<div class="tree-detail-row"><dt>管理ID</dt><dd data-tree-detail="record-id"></dd></div>\n',
+  '<div class="tree-detail-row"><dt>植栽年度</dt><dd data-tree-detail="year"></dd></div>\n',
+  planted_by_row,
+  '<div class="tree-detail-row"><dt>緯度・経度</dt><dd data-tree-detail="coordinates"></dd></div>\n',
+  '</dl>\n',
+  '<section class="tree-detail-note" aria-labelledby="tree-detail-note-heading">\n',
+  '<p id="tree-detail-note-heading" class="tree-detail-note-heading" role="heading" aria-level="4">備考</p>\n',
+  '<p data-tree-detail="note"></p>\n',
+  '</section>\n',
+  '</div>\n',
+  '</div>\n',
+  '</section>\n',
+  '</div>\n',
   sep = ""
 )
 cat(
   sprintf(
-    '<p id="tree-map-summary" class="tree-map-summary">公開対象の立木 %d件を表示しています。マーカーを選択すると詳細を確認できます。</p>\n',
+    '<p id="tree-map-summary" class="tree-map-summary">公開対象の立木 %d件を表示しています。マーカーを選択すると詳細パネルが更新されます。</p>\n',
     nrow(trees)
   )
 )
