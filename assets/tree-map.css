@@ -17,6 +17,7 @@
 #tree-map .tree-popup-name,
 #tree-map .tree-popup-scientific,
 #tree-map .tree-popup-meta,
+#tree-map .tree-popup-planted-by,
 #tree-map .tree-popup-note {
   display: block;
 }
@@ -30,8 +31,22 @@
   color: var(--bs-secondary-color);
 }
 
+#tree-map .tree-popup-planted-by {
+  margin-top: 0.45rem;
+}
+
+#tree-map .tree-popup-label {
+  color: var(--bs-secondary-color);
+}
+
 #tree-map .tree-popup-note {
   margin-top: 0.45rem;
+}
+
+.tree-site-variant {
+  margin-bottom: 0.75rem;
+  color: var(--bs-secondary-color);
+  font-size: 0.9rem;
 }
 
 @media (max-width: 575.98px) {

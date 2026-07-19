@@ -22,11 +22,14 @@
     const metaLine = metadata
       ? `<span class="tree-popup-meta">${metadata}</span>`
       : "";
+    const plantedBy = tree.planted_by
+      ? `<span class="tree-popup-planted-by"><span class="tree-popup-label">植栽者：</span>${escapeHtml(tree.planted_by)}</span>`
+      : "";
     const note = tree.note
       ? `<span class="tree-popup-note">${escapeHtml(tree.note)}</span>`
       : "";
 
-    return `<strong class="tree-popup-name">${name}</strong>${scientific}${metaLine}${note}`;
+    return `<strong class="tree-popup-name">${name}</strong>${scientific}${metaLine}${plantedBy}${note}`;
   }
 
   function initializeTreeMap() {
