@@ -1,0 +1,140 @@
+---
+title: "植樹木マップの技術解説"
+description: "Google Sheetから公開範囲の異なる2種類の地図サイトを生成する仕組み"
+lang: ja
+toc: true
+toc-depth: 3
+number-sections: true
+---
+
+このページでは、Google Sheetの植樹記録が地図になるまでの流れと、一般公開版と認証限定版を安全に分ける設計を解説します。日常の操作手順ではなく、データ処理、画面表示、公開、検査の仕組みを対象にしています。
+
+::: {.callout-note}
+地図本体とこの技術解説は、同じQuartoプロジェクトからGitHub Pages版とCloudflare版の両方へ生成されます。2つの版で異なるのは、含めるデータ列と配信時の認証です。
+:::
+
+## 全体構成
+
+```{mermaid}
+flowchart LR
+  A["Google Sheet<br>植樹記録"] --> B["GitHub Actions<br>一時CSVへ取得"]
+  B --> C["R / Quarto<br>行と列を選別"]
+  C --> D["一般公開用HTML<br>_site-public/"]
+  C --> E["認証限定用HTML<br>_site-cloudflare/"]
+  D --> F["GitHub Pages"]
+  E --> G["Cloudflare Access<br>+ JWT検証Worker"]
+  G --> H["認証済み利用者"]
+```
+
+Google Sheetへの接続は、閲覧時ではなくサイトの生成時に一度だけ行います。生成後の地図は静的なHTML、CSS、JavaScriptとして配信されるため、ブラウザからGoogle Sheetへ直接問い合わせることはありません。
+
+## データを地図へ変換する流れ
+
+### 1. Sheetを一時ファイルへ取得する
+
+`scripts/fetch_sheet.R` がGoogle SheetをCSVとして取得します。標準構成ではGoogle APIとサービスアカウントを使い、移行用としてリンク共有されたSheetを取得する方式にも対応しています。
+
+元CSVはリポジトリや公開成果物へ保存しません。`index.qmd` は、指定されたCSVがプロジェクト外にあることを確認してから読み込みます。これにより、元データを誤ってサイトと一緒に公開する可能性を下げています。
+
+### 2. 公開する行を選ぶ
+
+次の条件をすべて満たす行だけを採用します。
+
+- `publish` が `true`、`1`、`yes` のいずれかである
+- `latitude` と `longitude` が数値として解釈できる
+- 緯度と経度が有限値である
+
+### 3. 公開先ごとに列を選ぶ
+
+出力する列は許可リストで決めます。元Sheetに別の列が増えても、自動的に公開されることはありません。
+
+| 出力先 | HTML内の地図データに含める列 |
+|---|---|
+| GitHub Pages版 | `record_id`, `species_ja`, `species_scientific`, `latitude`, `longitude`, `year`, `note` |
+| Cloudflare版 | GitHub Pages版の列 + `planted_by` |
+
+`publish` は行の選別にだけ使い、HTMLへは出力しません。列の選別はJSONを作る前にR側で行うため、GitHub Pages版のHTMLやJavaScriptに `planted_by` は入りません。
+
+::: {.callout-important}
+`note` と緯度・経度はGitHub Pages版にも公開されます。個人名や非公開情報は `note` に入力しないでください。
+:::
+
+### 4. JSONをHTMLへ埋め込む
+
+選別後のデータを `jsonlite` でJSONに変換し、`index.html` 内の `application/json` 要素へ埋め込みます。閲覧時に別のデータAPIを呼ばない単純な構成なので、公開後の依存先と障害点を少なくできます。
+
+## 地図画面の仕組み
+
+地図表示にはLeaflet 1.9.4とOpenStreetMapの地図タイルを使います。`assets/tree-map.js` がHTML内のJSONを読み、各レコードを円形マーカーとして配置します。
+
+- 表示対象全体が収まるように初期表示範囲を自動調整する
+- マーカーを選ぶと、同じページの詳細パネルを更新する
+- EnterキーまたはSpaceキーでもマーカーを選択できる
+- 小さい画面では、地図と詳細パネルを縦に並べる
+- 通常のページスクロールを妨げないよう、地図を選ぶまでホイールズームを無効にする
+
+ツールチップへ渡す文字列はHTMLとしてエスケープし、詳細パネルは `textContent` で更新します。LeafletのCSSとJavaScriptにはSubresource Integrityのハッシュを指定し、意図しない内容へ差し替わった場合はブラウザが読み込みを拒否します。
+
+閲覧時にGoogle Sheetへは接続しませんが、LeafletのCSSとJavaScriptはjsDelivrから、地図タイルはOpenStreetMapから取得します。この2つの外部サービスへ接続できない場合、本文は表示されても地図は正常に動作しないことがあります。
+
+### 検索の範囲
+
+ナビゲーションのサイト内検索は、各ページの見出しと本文を対象にします。HTMLへ埋め込んだ植樹データは検索索引の対象ではなく、現在の地図には樹種名や管理IDによる専用の検索・絞り込み機能はありません。
+
+## 2つの公開先
+
+| 項目 | GitHub Pages版 | Cloudflare版 |
+|---|---|---|
+| 用途 | 一般公開 | 植栽者情報を扱う認証限定公開 |
+| Quarto profile | `public` | `cloudflare` |
+| 生成先 | `_site-public/` | `_site-cloudflare/` |
+| 認証 | なし | Cloudflare Access |
+| 追加データ | なし | `planted_by` |
+| 更新 | `main`への反映、手動実行、日次実行 | GitHub Actionsから手動実行 |
+
+両方とも同じ `index.qmd` とフロントエンド資産を使います。表示ロジックを二重管理せず、環境変数 `TREE_SITE_VARIANT` とQuarto profileでデータ列、生成先、Cloudflare固有ページを切り替えています。
+
+## Cloudflare版の認証
+
+Cloudflare版は、Cloudflare Accessのログイン判定に加えて、`worker/index.js` でもAccess JWTを検証します。
+
+1. Cloudflare Accessが利用者とpolicyを確認する
+2. WorkerがJWTの署名、発行者、audience、有効期限を確認する
+3. 検証に成功した要求だけをStatic Assetsへ渡す
+4. 失敗した要求には `403 Forbidden` を返す
+
+すべての静的ファイルをWorkerへ先に通し、レスポンスには `private, no-store`、`noindex, nofollow` などのヘッダーを付けます。認証済みの利用者はHTML内のデータを閲覧・保存できるため、Accessは「許可した利用者だけに配信する」仕組みであり、配信後のデータ利用まで制御するものではありません。
+
+::: {.callout-warning}
+Cloudflare Accessが保護するのはCloudflare版サイトのURLです。元Sheetをリンク共有している場合、その共有URLはAccessの保護対象外です。通常運用ではSheetを非公開にし、サービスアカウントで取得します。
+:::
+
+## 自動検査
+
+Pull Requestと `main` への反映時に、GitHub Actionsが次を確認します。
+
+- Access JWTを正しく受理・拒否できること
+- fixtureデータから一般公開版とCloudflare版をそれぞれ生成できること
+- 両方の成果物にこの技術解説ページとナビゲーションがあること
+- 一般公開版のJSONに `planted_by` がないこと
+- Cloudflare版にセキュリティヘッダーがあること
+- CSV、QMD、認証情報などが成果物へ混入していないこと
+- 検査用の非公開文字列が一般公開版へ漏れず、Cloudflare版だけに残ること
+
+レンダリングまたは検査が失敗した場合、デプロイ処理には進みません。
+
+## 主な実装ファイル
+
+| ファイル | 役割 |
+|---|---|
+| `index.qmd` | データの行・列を選別し、地図用JSONと画面の骨格を生成 |
+| `assets/tree-map.js` | Leaflet地図、マーカー、詳細パネル、キーボード操作 |
+| `assets/tree-map.css` | 地図と詳細パネルのレスポンシブレイアウト |
+| `scripts/fetch_sheet.R` | Google Sheetを一時CSVへ取得 |
+| `scripts/verify_build.R` | 2種類の成果物と情報分離を検査 |
+| `_quarto-public.yml` | GitHub Pages版の出力先 |
+| `_quarto-cloudflare.yml` | Cloudflare版の出力先と固有ページ |
+| `worker/index.js` | Access JWTを検証して静的ファイルを配信 |
+| `.github/workflows/` | 検査、GitHub Pages公開、Cloudflare公開 |
+
+この構成では、データの公開範囲をRで、画面の動作をJavaScriptで、配信時の認証をCloudflare Workerで担当します。役割を分けることで、一般公開版の情報分離をビルド時に確定し、認証限定版には配信時の防御を追加しています。

@@ -9,6 +9,8 @@
 
 設定を省略した場合は必ず一般公開版になります。元CSVとGoogle認証情報はリポジトリ外へ置き、公開成果物は `scripts/verify_build.R` で検査します。
 
+データの選別、地図表示、2種類の公開経路の仕組みは [`technical.qmd`](technical.qmd) で解説しています。このページはGitHub Pages版とCloudflare版の両方へ生成されます。
+
 ## Google Sheet
 
 Sheetは非公開＋サービスアカウント認証を標準とします。移行中に限り、Repository Variable `TREE_SHEET_ACCESS_MODE=public-link` を設定すると「リンクを知っている全員」共有のSheetを匿名取得できます。この場合、元Sheetの全列はリンクを知る人から閲覧可能であり、Cloudflare Accessではその経路を保護できません。

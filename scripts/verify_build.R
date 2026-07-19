@@ -17,7 +17,15 @@ if (!file.exists(index_file) || file.info(index_file)$size <= 0) {
   stop("Rendered index.html is missing or empty.", call. = FALSE)
 }
 
+technical_file <- file.path(output_dir, "technical.html")
+if (!file.exists(technical_file) || file.info(technical_file)$size <= 0) {
+  stop("Rendered technical.html is missing or empty.", call. = FALSE)
+}
+
 html <- paste(readLines(index_file, warn = FALSE, encoding = "UTF-8"), collapse = "\n")
+if (!grepl('href="./technical.html"', html, fixed = TRUE)) {
+  stop("The technical overview is missing from the site navigation.", call. = FALSE)
+}
 open_tag <- '<script id="tree-map-data" type="application/json">'
 start <- regexpr(open_tag, html, fixed = TRUE)[[1L]]
 if (start < 1L) {

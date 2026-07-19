@@ -2,6 +2,7 @@ project:
   output-dir: _site-cloudflare
   render:
     - index.qmd
+    - technical.qmd
     - notebook/cloudflare-workers-deployment.qmd
   resources:
     - _headers

@@ -3,6 +3,7 @@ project:
   output-dir: _site-public
   render:
     - index.qmd
+    - technical.qmd
 
 website:
   title: "吉田山 植樹木マップ"
@@ -10,6 +11,12 @@ website:
     left:
       - href: index.qmd
         text: Home
+      - href: technical.qmd
+        text: 技術解説
+    right:
+      - icon: github
+        href: https://github.com/maple60/yoshidayama-tree-map
+        aria-label: GitHub
 
 format:
   html:
