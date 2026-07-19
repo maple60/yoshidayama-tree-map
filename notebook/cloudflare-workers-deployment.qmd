@@ -451,7 +451,7 @@ Cloudflare Accessは「サイトへ到達できる人」を制御する。認証
 
 ### Google Sheetsの公開範囲
 
-現在の実装は、非公開Google Sheetを読み取り専用service accountでGitHub Actionsから取得する。元シートを一般公開せず、`GOOGLE_SERVICE_ACCOUNT_JSON` はGitHub Secretだけに保存する。
+標準構成では、非公開Google Sheetを読み取り専用service accountでGitHub Actionsから取得し、`GOOGLE_SERVICE_ACCOUNT_JSON` はGitHub Secretだけに保存する。移行中に `TREE_SHEET_ACCESS_MODE=public-link` を使う場合、元Sheetの全列はリンクを知る人から閲覧可能であり、Cloudflare Accessではその経路を保護できない。
 
 ### API tokenとservice token
 

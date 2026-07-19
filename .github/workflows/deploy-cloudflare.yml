@@ -16,6 +16,8 @@ jobs:
     timeout-minutes: 30
     env:
       TREE_SHEET_ID: ${{ vars.TREE_SHEET_ID }}
+      TREE_SHEET_ACCESS_MODE: ${{ vars.TREE_SHEET_ACCESS_MODE }}
+      TREE_SHEET_GID: ${{ vars.TREE_SHEET_GID }}
 
     steps:
       - uses: actions/checkout@v7
@@ -30,6 +32,7 @@ jobs:
       - uses: r-lib/actions/setup-renv@v2
 
       - name: Authenticate to Google Sheets
+        if: env.TREE_SHEET_ACCESS_MODE != 'public-link'
         id: google-auth
         uses: google-github-actions/auth@v3
         with:
@@ -38,7 +41,7 @@ jobs:
           token_format: access_token
           access_token_scopes: https://www.googleapis.com/auth/spreadsheets.readonly
 
-      - name: Fetch private source sheet
+      - name: Fetch source sheet
         env:
           GOOGLE_ACCESS_TOKEN: ${{ steps.google-auth.outputs.access_token }}
           TREE_SHEET_RANGE: ${{ vars.TREE_SHEET_RANGE }}
