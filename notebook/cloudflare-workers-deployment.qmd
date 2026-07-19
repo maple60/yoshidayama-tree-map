@@ -1,0 +1,536 @@
+---
+title: "Cloudflare Workers 公開・保守ガイド"
+description: "QuartoサイトをGitHub Actionsでレンダリングし、Cloudflare Workers Static AssetsとAccessで限定公開する手順"
+lang: ja
+toc: true
+toc-depth: 3
+number-sections: true
+---
+
+## このガイドの方針
+
+このリポジトリでは、**QuartoとRのレンダリングはGitHub Actionsで行い、Cloudflare Workersは生成済みの静的ファイルを配信するだけ**の構成を推奨する。
+
+```text
+Google Sheets
+    ↓ ビルド時に取得
+GitHub Actions（R + renv + Quarto）
+    ↓ quarto render
+_site/
+    ↓ wrangler deploy
+Cloudflare Workers Static Assets
+    ↓ Cloudflare Accessで認証
+カスタムドメイン
+```
+
+この構成には次の利点がある。
+
+- R、renv、Quarto向けの実績があるGitHub Actionsを利用できる
+- Cloudflare側にRやQuartoのビルド環境を持たせなくてよい
+- WorkerのJavaScriptを作らず、静的配信として小さく始められる
+- 認証はアプリ内に実装せず、Cloudflare Accessに任せられる
+- デプロイ済みバージョンへすぐロールバックできる
+
+::: {.callout-important}
+現在の `index.qmd` はGoogle Sheetsを**レンダリング時**に読み込み、公開対象のデータをHTMLへ埋め込む。シートを更新しただけでは公開サイトは変わらず、Actionsの再実行と再デプロイが必要になる。
+:::
+
+::: {.callout-note}
+この文書は設定手順をまとめたもの。現時点ではCloudflareへのデプロイ、GitHub Secretsの登録、`wrangler.jsonc` やActions workflowの追加は実施していない。
+:::
+
+## 構成と責任分担
+
+| 処理 | 担当 | 内容 |
+|---|---|---|
+| 元データ管理 | Google Sheets | 樹木情報、座標、公開フラグなどを管理 |
+| サイト生成 | GitHub Actions | R環境を復元し、`quarto render` を実行 |
+| 成果物 | `_site/` | HTML、CSS、JavaScriptなど。Gitにはコミットしない |
+| 静的配信 | Workers Static Assets | `_site/` をそのまま配信 |
+| 閲覧認証 | Cloudflare Access | 許可した利用者だけを通す |
+| URL・TLS | Cloudflare Custom Domain | 独自ドメインとHTTPS証明書を管理 |
+
+最初はサイト全体を同じ権限で閲覧できる「一枚の認証ゲート」とする。ユーザー別の表示、編集機能、役割別権限が必要になった場合のみ、WorkerコードとAccess JWT検証を追加する。
+
+## 公開前に決めること
+
+Cloudflareを操作する前に、次を決めておく。
+
+- 本番URL。例: `trees.example.jp`
+- Cloudflareで管理するドメインとDNS zone
+- 閲覧を許可する人、メールアドレス、組織
+- 認証方式: Cloudflare IdP、One-time PIN、組織IdP
+- Google Sheetsの更新をサイトへ反映する頻度
+- 本番デプロイを自動化するか、GitHub Environmentで承認を挟むか
+- 位置情報を閲覧者がダウンロードできることを許容できるか
+
+ドメイン未決定の間は、以下の例にある `trees.example.jp` を実際のホスト名へ置き換えないままデプロイしない。
+
+## 実装時に追加するファイル
+
+公開設定を実装する段階では、概ね次を追加する。
+
+```text
+.
+├─ .github/
+│  └─ workflows/
+│     └─ deploy-workers.yml
+├─ notebook/
+│  └─ cloudflare-workers-deployment.qmd
+├─ package.json
+├─ package-lock.json
+└─ wrangler.jsonc
+```
+
+- `package.json` / `package-lock.json`: Wranglerのバージョンを固定する
+- `wrangler.jsonc`: Worker名、静的ファイル、公開経路を宣言する
+- `deploy-workers.yml`: レンダリング、検査、デプロイを自動化する
+
+`wrangler` はグローバルではなく、このプロジェクトのdev dependencyとして追加する。
+
+## ローカル準備
+
+### 必要な環境
+
+- R 4.5.3（`renv.lock` と合わせる）
+- Quarto
+- Node.js LTS
+- npm
+- Cloudflareアカウント
+- Cloudflareでactiveになっている対象ドメイン
+
+このリポジトリを確認した時点ではNode.js/npmがPATH上にないため、Wranglerを始める前にNode.js LTSを導入する。
+
+### Wranglerの導入
+
+PowerShellでリポジトリ直下から実行する。
+
+```powershell
+npm init -y
+npm install --save-dev wrangler@latest
+npx wrangler --version
+```
+
+`package-lock.json` をコミットし、ローカルとActionsの双方で同じ依存関係を使う。Actionsでは `npm install` ではなく `npm ci` を使う。
+
+### レンダリングとローカル確認
+
+```powershell
+quarto render
+Test-Path _site/index.html
+npx wrangler dev
+```
+
+`npx wrangler dev` の表示URL（通常は `http://localhost:8787`）を開き、次を確認する。
+
+- 地図が表示される
+- 樹木のマーカーとポップアップが表示される
+- CSSとJavaScriptが404にならない
+- モバイル幅でも操作できる
+- 公開対象外の行が含まれていない
+
+## `wrangler.jsonc` の基本設定
+
+最終的な本番設定の例を示す。
+
+```jsonc
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "yoshidayama-tree-map",
+  "compatibility_date": "2026-07-19",
+  "workers_dev": false,
+  "preview_urls": false,
+  "assets": {
+    "directory": "./_site"
+  },
+  "routes": [
+    {
+      "pattern": "trees.example.jp",
+      "custom_domain": true
+    }
+  ]
+}
+```
+
+このサイトはpure staticとして始めるため、次は設定しない。
+
+- `main`: Workerコードは作らない
+- `assets.binding`: Workerコードからassetsを読む必要がない
+- `assets.run_worker_first`: 全リクエストでWorkerを起動しない
+- SPA fallback: QuartoサイトはSPAではない
+
+`workers_dev: false` と `preview_urls: false` は、Accessを通らない別URLから認証を迂回されないよう明示する。ダッシュボードだけで変更せず、`wrangler.jsonc` を設定の正本にする。
+
+::: {.callout-warning}
+最初から上記の `routes` を含めてデプロイすると、Accessの設定が完了する前にカスタムドメインが公開される可能性がある。初回は `routes` を外した状態でWorkerを作成し、Accessを先に設定してからCustom Domainを追加する。
+:::
+
+## Cloudflareの初回設定
+
+### 1. ドメインをCloudflareへ追加
+
+1. Cloudflareに対象ドメインを追加する
+2. nameserverを切り替える
+3. zoneが `Active` になったことを確認する
+4. 使用予定のホスト名に競合するCNAME等がないことを確認する
+
+Custom DomainではCloudflareがDNSレコードとTLS証明書を管理する。同じホスト名に既存CNAMEがある場合は先に整理する。
+
+### 2. 到達不能な状態でWorkerを作る
+
+初回用の `wrangler.jsonc` では `routes` を省き、次を明示する。
+
+```jsonc
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "yoshidayama-tree-map",
+  "compatibility_date": "2026-07-19",
+  "workers_dev": false,
+  "preview_urls": false,
+  "assets": {
+    "directory": "./_site"
+  }
+}
+```
+
+ローカル端末から初回だけ認証し、デプロイする。
+
+```powershell
+npx wrangler login
+quarto render
+npx wrangler deploy
+```
+
+この時点ではWorkerは作られているが、`workers.dev`、Preview URL、Custom Domainのいずれからも公開されていない状態を目指す。
+
+### 3. Zero TrustとIdPを設定
+
+Cloudflare Zero Trustでorganizationを作成し、用途に合うIdPを選ぶ。
+
+| 利用者 | 推奨方式 | ポリシー |
+|---|---|---|
+| Cloudflare管理者だけ | Cloudflare IdP | Cloudflare Account Memberを許可 |
+| 少数の外部閲覧者 | One-time PIN | 個別メールアドレスを許可 |
+| 大学・組織の利用者 | Google Workspace、Entra ID、OIDC/SAML等 | 組織グループを許可 |
+
+One-time PINを使う場合、`Login Methods = One-time PIN` だけをAllow条件にしない。この条件だけでは、有効なメールアドレスを持つ不特定の利用者を許可する。必ず個別メールまたは管理対象ドメイン等へ限定する。
+
+### 4. AccessでWorkerを直接保護
+
+Zero TrustのAccess applicationを作成し、可能ならdestinationに対象Worker `yoshidayama-tree-map` を直接指定する。Worker単位の保護により、Custom Domainだけでなく、そのWorkerへ到達する別経路も同じAccess policyへ通せる。
+
+基本ポリシーの例:
+
+```text
+Action: Allow
+Include:
+  Emails:
+    user1@example.jp
+    user2@example.jp
+Session duration: 8h または 24h
+```
+
+Access applicationはAllow条件に一致しない利用者を拒否する。限定公開では `Everyone` や `Bypass` を安易に使わない。
+
+Workerをdestinationとして選べない場合は、Custom Domainのホスト名を対象にSelf-hosted applicationを作る。この代替ではホスト名以外の経路が保護対象にならないため、`workers_dev` とPreview URLが無効であることを特に確認する。
+
+### 5. Custom Domainを追加
+
+Accessの設定後、`wrangler.jsonc` に本番の `routes` を追加して再デプロイする。
+
+```jsonc
+"routes": [
+  {
+    "pattern": "trees.example.jp",
+    "custom_domain": true
+  }
+]
+```
+
+```powershell
+npx wrangler deploy
+```
+
+ダッシュボードから設定する場合は、Workers & Pages → 対象Worker → Settings → Domains & Routes → Add → Custom Domainと進む。Wranglerで `routes` を管理し始めた後は、ダッシュボード側だけで変更しない。
+
+## GitHub Actionsの設定
+
+### GitHubに登録する値
+
+Repository settingsで次を登録する。
+
+**Actions secrets**
+
+- `CLOUDFLARE_API_TOKEN`
+- `CLOUDFLARE_ACCOUNT_ID`
+
+**Actions variable**
+
+- `TREE_SHEET_ID`
+
+`CLOUDFLARE_API_TOKEN` はCloudflareの `Edit Cloudflare Workers` テンプレートを基に作り、対象accountとzoneを必要最小限に絞る。リポジトリやworkflowへ値を直接書かない。
+
+デプロイ用Cloudflare API tokenと、Accessを通過するためのservice tokenは別物である。ActionsがデプロイするだけならAccess service tokenは不要で、保護URLを自動smoke testする場合だけ追加する。
+
+### workflow例
+
+`.github/workflows/deploy-workers.yml` の例:
+
+```yaml
+name: Deploy Quarto site to Cloudflare Workers
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+  schedule:
+    - cron: "15 20 * * *"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cloudflare-workers-production
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      TREE_SHEET_ID: ${{ vars.TREE_SHEET_ID }}
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install Node dependencies
+        run: npm ci
+
+      - uses: quarto-dev/quarto-actions/setup@v2
+
+      - uses: r-lib/actions/setup-r@v2
+        with:
+          r-version: "4.5.3"
+          use-public-rspm: true
+
+      - uses: r-lib/actions/setup-renv@v2
+        with:
+          cache-version: 1
+
+      - name: Check configuration
+        shell: bash
+        run: test -n "$TREE_SHEET_ID"
+
+      - name: Render
+        run: quarto render
+
+      - name: Verify output
+        shell: bash
+        run: |
+          test -s _site/index.html
+          test -s _site/assets/tree-map.js
+          test -s _site/assets/tree-map.css
+
+      - name: Deploy
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: deploy
+```
+
+上記scheduleのcronはUTCで、`20:15 UTC` は日本時間の翌日 `05:15` に相当する。更新頻度が低ければ週次に変更してよい。GitHub Actionsのscheduleは厳密な時刻実行を保証するものではない。
+
+PRではCloudflare tokenを渡さず、レンダリングと出力検査だけを行うworkflowを別にすると安全である。Previewが本当に必要になった時点で、Access保護付きPreview URLを追加する。
+
+### 本番承認を挟む場合
+
+誤操作の影響を抑えたい場合はGitHub Environmentに `production` を作り、required reviewerを設定してjobへ次を加える。
+
+```yaml
+environment: production
+```
+
+シート更新を毎日自動反映したい場合は承認なし、コード変更だけ承認ありにするなど、workflowを分ける選択肢もある。
+
+## 初回公開の確認
+
+公開直後は、ブラウザの通常ウィンドウだけでなくシークレットウィンドウを使い、次を順に確認する。
+
+- GitHub Actionsが成功している
+- 本番カスタムドメインがHTTPSで開く
+- 未認証状態ではAccessのログイン画面になる
+- 許可ユーザーはログイン後にサイトを閲覧できる
+- 許可されていないユーザーは拒否される
+- `*.workers.dev` から直接アクセスできない
+- Preview URLが無効、またはAccessで保護されている
+- 地図、マーカー、ポップアップが表示される
+- 公開対象外の行がHTMLや埋め込みJSONに含まれない
+- モバイル表示が崩れていない
+- Zero TrustのAccess authentication logsにAllow/Blockが記録される
+
+アクセス制御を確認するまでは、公開完了とみなさない。
+
+## 日常の更新フロー
+
+### Google Sheetsだけを更新した場合
+
+1. シートの値と公開フラグを確認する
+2. GitHub Actionsの定期実行を待つか、`workflow_dispatch` で手動実行する
+3. RenderとDeployが成功したことを確認する
+4. 本番サイトで変更箇所を確認する
+
+即時反映が必要になった場合は、将来Google Apps ScriptからGitHubの `repository_dispatch` を呼ぶ方法を検討する。最初は定期実行と手動実行の方が構成が単純である。
+
+### ソースコードを更新した場合
+
+1. ローカルで `quarto render` を実行する
+2. `_site/index.html` と地図を確認する
+3. 変更をcommitし、PRでレビューする
+4. `main` へmergeする
+5. 本番workflowの成功を確認する
+6. 本番URLでsmoke testする
+
+Actionsがレンダリングに失敗した場合はDeploy stepへ進まないため、直前の正常な本番versionはそのまま残る。
+
+## 定期保守
+
+### 毎回または更新時
+
+- ActionsのRender/Deploy結果を確認する
+- 本番サイトで地図と主要マーカーを確認する
+- AccessのAllow/Blockを必要に応じて確認する
+- Google Sheetsの公開フラグと座標を確認する
+
+### 月次
+
+- Actionsの失敗履歴と所要時間を確認する
+- Accessの許可ユーザーを棚卸しする
+- `workers.dev` とPreview URLの設定を確認する
+- ドメイン、証明書、DNSに警告がないか確認する
+- WranglerとGitHub Actionsの更新有無を確認する
+
+### 四半期または依存関係更新時
+
+```powershell
+Rscript -e "renv::status()"
+npm outdated
+npx wrangler --version
+```
+
+- R packageを更新したらローカルレンダリング後に `renv::snapshot()` を実行する
+- Wrangler更新時はrelease notesを確認し、`package-lock.json` も更新する
+- `compatibility_date` は動作確認と同じ変更で意図的に進める
+- 依存関係更新とコンテンツ更新を可能なら別PRにする
+
+## ロールバック
+
+本番表示に問題があれば、まず新しいデプロイを止め、直前の正常versionへ戻す。
+
+```powershell
+npx wrangler deployments list
+npx wrangler versions list
+npx wrangler rollback <VERSION_ID> --message "rollback after failed smoke test"
+```
+
+ロールバック後に本番URLを確認し、原因を別ブランチで修正する。静的assetsもversionに含まれるため、HTML、CSS、JavaScriptをまとめて戻せる。
+
+デプロイ前のcommitへGitを戻して再デプロイする方法もあるが、緊急時はWranglerのrollbackの方が速い。ロールバック後も原因となったcommitを履歴から消さず、修正commitまたはrevertで経緯を残す。
+
+## セキュリティ上の注意
+
+### Accessが保護する範囲
+
+Cloudflare Accessは「サイトへ到達できる人」を制御する。認証後の利用者に対して、樹木ごとの閲覧権限を分けるものではない。
+
+このサイトではデータがHTML内のJSONへ埋め込まれるため、閲覧を許可された利用者は座標を含むデータを取得できる。画面で隠すだけでは保護にならない。
+
+### Google Sheetsの公開範囲
+
+現在の実装は匿名で読めるGoogle SheetsのCSV endpointをレンダリング時に利用する。Cloudflare Accessでサイトを限定公開しても、元のシートが公開設定ならシート自体のURLは別途アクセスできる。
+
+元データも非公開にする必要がある場合は、Google APIのservice account等による取得へ設計変更が必要になる。これは認証情報管理とActions設定を伴うため、公開サイトのAccess設定とは分けて検討する。
+
+### API tokenとservice token
+
+- Cloudflare API token: Wranglerがデプロイするための資格情報
+- Access service token: 自動処理がAccess保護済みURLへ入るための資格情報
+
+用途を混同せず、いずれもGitHub Secretsへ保存する。Access service tokenは作成時しかsecretを確認できないため、安全な保管とローテーションを行う。
+
+### セキュリティヘッダー
+
+必要なら、Quarto project resourceとして `_headers` を `_site/` に含め、Workers Static Assetsへ次のようなヘッダーを付けられる。
+
+```text
+/*
+  X-Content-Type-Options: nosniff
+  X-Frame-Options: DENY
+  Referrer-Policy: strict-origin-when-cross-origin
+  X-Robots-Tag: noindex, nofollow
+```
+
+CSPはインラインスクリプト、Leaflet CDN、OpenStreetMap tileとの整合が必要であり、確認なしに追加すると地図を壊す可能性がある。ブラウザの開発者ツールで必要な接続先を確認してから段階的に導入する。
+
+## 障害時の確認表
+
+| 症状 | 主な確認箇所 | 対応 |
+|---|---|---|
+| ActionsのRenderが失敗 | R/renv、シート取得、`TREE_SHEET_ID` | logの最初の失敗を修正し再実行 |
+| 地図が空 | シートの公開フラグ、座標、埋め込みJSON | Render済みHTMLとブラウザconsoleを確認 |
+| CSS/JSが404 | `_site/assets/`、相対パス、Deploy前検査 | `_site` を再生成し、対象ファイルを確認 |
+| 403またはログインループ | Access policy、IdP、cookie、時刻 | シークレットウィンドウとAccess logsで確認 |
+| 不許可ユーザーも入れる | `Everyone`、OTPだけのAllow、Bypass | policyを具体的メール/グループへ限定 |
+| `workers.dev` から入れる | `workers_dev`、再デプロイ状況 | `false` を設定ファイルに書いて再デプロイ |
+| データが古い | schedule、workflow失敗、シート更新時刻 | 手動実行し、本番versionを確認 |
+| Custom Domainが付かない | zone状態、既存DNS、route | zoneをActiveにし競合recordを整理 |
+| 新版だけ不具合 | deployment/version | 直前の正常versionへrollback |
+
+## 将来の拡張判断
+
+次の要件が出るまではWorkerコードを追加しない。
+
+- ユーザーごとに異なるデータを返したい
+- 権限別に操作を分けたい
+- APIを提供したい
+- Access JWTをアプリ側でも検証したい
+- 動的な検索・更新処理をサーバー側で行いたい
+
+追加する場合は `main`、assets binding、`run_worker_first` を設定し、`Cf-Access-Jwt-Assertion` の署名、issuer、audience、有効期限をWorker内で検証する。単にheaderやcookieが存在するかを見るだけでは認証にならない。また全asset requestでWorkerが動く構成は、実行回数と料金の対象になり得る。
+
+## 公式ドキュメント
+
+- [Cloudflare Workers Static Assets](https://developers.cloudflare.com/workers/static-assets/)
+- [Static Assets: Get started](https://developers.cloudflare.com/workers/static-assets/get-started/)
+- [Wrangler configuration](https://developers.cloudflare.com/workers/wrangler/configuration/)
+- [GitHub ActionsによるWorkersデプロイ](https://developers.cloudflare.com/workers/ci-cd/external-cicd/github-actions/)
+- [Custom Domains](https://developers.cloudflare.com/workers/configuration/routing/custom-domains/)
+- [Cloudflare AccessでWorkersを保護](https://developers.cloudflare.com/cloudflare-one/access-controls/applications/choose-application-type/#protecting-workers)
+- [Self-hosted application](https://developers.cloudflare.com/cloudflare-one/access-controls/applications/http-apps/self-hosted-public-app/)
+- [One-time PIN](https://developers.cloudflare.com/cloudflare-one/integrations/identity-providers/one-time-pin/)
+- [Access policies](https://developers.cloudflare.com/cloudflare-one/access-controls/policies/)
+- [Preview URLs](https://developers.cloudflare.com/workers/versions-and-deployments/preview-urls/)
+- [Versions and deployments](https://developers.cloudflare.com/workers/versions-and-deployments/)
+- [Rollbacks](https://developers.cloudflare.com/workers/versions-and-deployments/rollbacks/)
+- [Quarto: GitHub Actions](https://quarto.org/docs/publishing/ci.html)
+
+## 公開完了の定義
+
+次がすべて満たされた時点を公開完了とする。
+
+- [ ] ローカルでサイトをレンダリングできる
+- [ ] `wrangler dev` で静的サイトを確認できる
+- [ ] GitHub Actionsで同じレンダリングを再現できる
+- [ ] `_site/index.html` と主要assetsをデプロイ前に検査している
+- [ ] 本番はCustom DomainからHTTPSで開ける
+- [ ] AccessがWorkerまたは全公開経路を保護している
+- [ ] 許可ユーザー、不許可ユーザー、未認証の3パターンを確認した
+- [ ] `workers.dev` とPreview URLから認証を迂回できない
+- [ ] Google Sheets更新の反映方法を運用担当者が理解している
+- [ ] rollback手順と正常versionを確認した
+- [ ] 許可ユーザーとSecretsの定期棚卸し方法が決まっている
